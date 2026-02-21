@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+// GET: Check if student exists
+export async function GET(req: NextRequest) {
+  const studentId = req.nextUrl.searchParams.get("id");
+
+  if (!studentId) {
+    return NextResponse.json({ error: "id parameter is required" }, { status: 400 });
+  }
+
+  const student = await prisma.student.findUnique({ where: { id: studentId } });
+
+  if (!student) {
+    return NextResponse.json({ exists: false }, { status: 404 });
+  }
+
+  return NextResponse.json(student);
+}
+
 // POST: Create or get student
 export async function POST(req: NextRequest) {
   const body = await req.json();

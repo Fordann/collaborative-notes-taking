@@ -17,8 +17,15 @@ export default function CreateGroupPage() {
     const studentName = localStorage.getItem("studentName") || "Étudiant";
 
     try {
-      // Ensure student exists
+      // Ensure student exists (verify cached ID is still valid)
       let studentId = localStorage.getItem("studentId");
+      if (studentId) {
+        const checkRes = await fetch(`/api/students?id=${studentId}`);
+        if (!checkRes.ok) {
+          localStorage.removeItem("studentId");
+          studentId = null;
+        }
+      }
       if (!studentId) {
         const studentRes = await fetch("/api/students", {
           method: "POST",
