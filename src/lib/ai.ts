@@ -4,6 +4,26 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || "",
 });
 
+async function callWithRetry(
+  params: Parameters<typeof anthropic.messages.create>[0],
+  maxRetries = 4
+): Promise<Anthropic.Messages.Message> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await anthropic.messages.create(params);
+    } catch (err: unknown) {
+      const isRateLimit =
+        err instanceof Anthropic.RateLimitError ||
+        (err instanceof Error && "status" in err && (err as { status: number }).status === 429);
+      if (!isRateLimit || attempt === maxRetries) throw err;
+      const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s, 16s
+      console.warn(`Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries})...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("Unreachable");
+}
+
 export interface StyleProfile {
   format: "bullet_points" | "paragraphs" | "mixed" | "outline";
   detailLevel: "concise" | "moderate" | "detailed";
@@ -17,7 +37,7 @@ export interface StyleProfile {
 export async function analyzeWritingStyle(
   notes: string
 ): Promise<StyleProfile> {
-  const response = await anthropic.messages.create({
+  const response = await callWithRetry({
     model: "claude-sonnet-4-20250514",
     max_tokens: 2000,
     messages: [
@@ -78,7 +98,7 @@ export async function mergeNotesForStudent(
   onProgress?.("Identification des informations manquantes...", 30);
 
   // Step 2: Find what target student is missing
-  const gapAnalysis = await anthropic.messages.create({
+  const gapAnalysis = await callWithRetry({
     model: "claude-sonnet-4-20250514",
     max_tokens: 4000,
     messages: [
@@ -123,7 +143,7 @@ Langue: ${input.targetStudent.styleProfile.language}
 
   onProgress?.("Rédaction dans ton style personnel...", 70);
 
-  const mergeResponse = await anthropic.messages.create({
+  const mergeResponse = await callWithRetry({
     model: "claude-sonnet-4-20250514",
     max_tokens: 8000,
     messages: [
