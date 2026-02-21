@@ -67,16 +67,48 @@ export default function MergePage() {
   }, [fetchStatus]);
 
   const downloadPdf = async (resultStudentId: string) => {
-    const res = await fetch(
-      `/api/merge/${sessionId}/result/${resultStudentId}`
-    );
-    if (res.ok) {
-      const data = await res.json();
-      // Open the HTML in a new tab for printing/saving as PDF
-      const win = window.open("", "_blank");
-      if (win) {
-        win.document.write(data.html);
-        win.document.close();
+    try {
+      const res = await fetch(
+        `/api/merge/${sessionId}/result/${resultStudentId}?format=pdf`
+      );
+      if (!res.ok) return;
+
+      const contentType = res.headers.get("Content-Type") || "";
+
+      if (contentType.includes("application/pdf")) {
+        // Direct PDF download
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download =
+          res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ||
+          "notes.pdf";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // HTML fallback
+        const data = await res.json();
+        const win = window.open("", "_blank");
+        if (win) {
+          win.document.write(data.html);
+          win.document.close();
+        }
+      }
+    } catch {
+      // Fallback: try HTML format
+      const res = await fetch(
+        `/api/merge/${sessionId}/result/${resultStudentId}?format=html`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const win = window.open("", "_blank");
+        if (win) {
+          win.document.write(data.html);
+          win.document.close();
+        }
       }
     }
   };
