@@ -1,8 +1,98 @@
 "use client";
 
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 
 type ConversionMode = "trace" | "posterize";
+type AnimationType = "none" | "fade-in" | "draw" | "scale" | "slide-up";
+
+function countSvgShapes(svg: string): { paths: number; layers: number } {
+  const pathMatches = svg.match(/class="svg-shape"/g);
+  const layerMatches = svg.match(/class="svg-layer"/g);
+  return {
+    paths: pathMatches?.length ?? 0,
+    layers: layerMatches?.length ?? 0,
+  };
+}
+
+function injectAnimation(
+  svgContainer: HTMLElement,
+  type: AnimationType,
+  durationMs: number
+) {
+  const shapes = svgContainer.querySelectorAll<SVGPathElement>(".svg-shape");
+  const layers = svgContainer.querySelectorAll<SVGGElement>(".svg-layer");
+
+  // Reset all animations
+  shapes.forEach((el) => {
+    el.style.removeProperty("animation");
+    el.style.removeProperty("opacity");
+    el.style.removeProperty("transform");
+    el.style.removeProperty("stroke-dasharray");
+    el.style.removeProperty("stroke-dashoffset");
+    el.style.removeProperty("stroke");
+    el.style.removeProperty("stroke-width");
+  });
+  layers.forEach((el) => {
+    el.style.removeProperty("animation");
+    el.style.removeProperty("opacity");
+  });
+
+  if (type === "none") return;
+
+  const total = shapes.length || 1;
+  const staggerMs = Math.min(durationMs / total, 200);
+
+  shapes.forEach((el, i) => {
+    const delay = i * staggerMs;
+
+    switch (type) {
+      case "fade-in":
+        el.style.opacity = "0";
+        el.style.animation = `svg-draw ${durationMs}ms ease-out ${delay}ms forwards`;
+        break;
+
+      case "draw": {
+        const length = el.getTotalLength?.() || 1000;
+        const fill = el.getAttribute("fill") || "black";
+        el.style.fill = "transparent";
+        el.style.stroke = fill;
+        el.style.strokeWidth = "1.5";
+        el.style.strokeDasharray = `${length}`;
+        el.style.strokeDashoffset = `${length}`;
+        el.style.transition = `stroke-dashoffset ${durationMs}ms ease-out ${delay}ms, fill ${durationMs * 0.3}ms ease-out ${delay + durationMs * 0.7}ms`;
+        requestAnimationFrame(() => {
+          el.style.strokeDashoffset = "0";
+          el.style.fill = fill;
+        });
+        break;
+      }
+
+      case "scale":
+        el.style.opacity = "0";
+        el.style.transformOrigin = "center";
+        el.style.transformBox = "fill-box";
+        el.style.transform = "scale(0)";
+        el.style.transition = `opacity ${durationMs * 0.5}ms ease-out ${delay}ms, transform ${durationMs}ms cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms`;
+        requestAnimationFrame(() => {
+          el.style.opacity = "1";
+          el.style.transform = "scale(1)";
+        });
+        break;
+
+      case "slide-up":
+        el.style.opacity = "0";
+        el.style.transformOrigin = "center";
+        el.style.transformBox = "fill-box";
+        el.style.transform = "translateY(30px)";
+        el.style.transition = `opacity ${durationMs * 0.5}ms ease-out ${delay}ms, transform ${durationMs}ms ease-out ${delay}ms`;
+        requestAnimationFrame(() => {
+          el.style.opacity = "1";
+          el.style.transform = "translateY(0)";
+        });
+        break;
+    }
+  });
+}
 
 export default function ImageToSvgPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -20,7 +110,13 @@ export default function ImageToSvgPage() {
   const [background, setBackground] = useState("transparent");
   const [turdSize, setTurdSize] = useState(2);
   const [steps, setSteps] = useState(4);
+  const [separated, setSeparated] = useState(true);
   const [showOptions, setShowOptions] = useState(false);
+
+  // Animation
+  const [animationType, setAnimationType] = useState<AnimationType>("none");
+  const [animDuration, setAnimDuration] = useState(2000);
+  const svgResultRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,6 +173,7 @@ export default function ImageToSvgPage() {
       formData.append("background", background);
       formData.append("turdSize", turdSize.toString());
       formData.append("steps", steps.toString());
+      formData.append("separated", separated.toString());
 
       const res = await fetch("/api/image-to-svg", {
         method: "POST",
@@ -123,10 +220,27 @@ export default function ImageToSvgPage() {
     setPreview(null);
     setSvgContent(null);
     setError(null);
+    setAnimationType("none");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
+
+  const handlePlayAnimation = useCallback(() => {
+    if (!svgResultRef.current || animationType === "none") return;
+    injectAnimation(svgResultRef.current, animationType, animDuration);
+  }, [animationType, animDuration]);
+
+  // Play animation when type or duration changes
+  useEffect(() => {
+    if (svgContent && separated && animationType !== "none") {
+      // Small delay to let the DOM settle
+      const timer = setTimeout(handlePlayAnimation, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [svgContent, separated, animationType, animDuration, handlePlayAnimation]);
+
+  const shapeInfo = svgContent && separated ? countSvgShapes(svgContent) : null;
 
   return (
     <div className="max-w-4xl mx-auto py-8 space-y-8">
@@ -407,6 +521,26 @@ export default function ImageToSvgPage() {
                   </div>
                 </div>
               )}
+
+              {/* Separated SVG toggle */}
+              <div className="space-y-2 pt-3 border-t border-slate-100">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={separated}
+                    onChange={(e) => setSeparated(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 w-5 h-5"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">
+                      SVG animable (sous-groupes séparés)
+                    </span>
+                    <p className="text-xs text-slate-400">
+                      Chaque contour est un &lt;path&gt; individuel dans un &lt;g&gt;, permettant des animations CSS/JS
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
           )}
         </div>
@@ -458,6 +592,85 @@ export default function ImageToSvgPage() {
       {/* Result */}
       {svgContent && (
         <div className="space-y-6">
+          {/* Shape info badge */}
+          {shapeInfo && shapeInfo.paths > 0 && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 text-sm font-medium">
+                {shapeInfo.paths} contours séparés
+              </span>
+              {shapeInfo.layers > 1 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-sm font-medium">
+                  {shapeInfo.layers} couches
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Animation controls */}
+          {separated && shapeInfo && shapeInfo.paths > 0 && (
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-slate-700">
+                Aperçu d&apos;animation
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { value: "none", label: "Aucune" },
+                    { value: "fade-in", label: "Fondu" },
+                    { value: "draw", label: "Dessin (stroke)" },
+                    { value: "scale", label: "Zoom" },
+                    { value: "slide-up", label: "Glissement" },
+                  ] as { value: AnimationType; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setAnimationType(opt.value)}
+                    className={`py-2 px-4 rounded-xl text-sm font-medium transition ${
+                      animationType === opt.value
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {animationType !== "none" && (
+                <div className="flex items-center gap-4">
+                  <label className="text-sm text-slate-600 whitespace-nowrap">
+                    Durée
+                  </label>
+                  <input
+                    type="range"
+                    min="500"
+                    max="6000"
+                    step="250"
+                    value={animDuration}
+                    onChange={(e) => setAnimDuration(parseInt(e.target.value))}
+                    className="flex-1"
+                  />
+                  <span className="text-sm text-slate-500 w-12 text-right">
+                    {(animDuration / 1000).toFixed(1)}s
+                  </span>
+                  <button
+                    onClick={handlePlayAnimation}
+                    className="py-2 px-4 rounded-xl text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center gap-1.5"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    Rejouer
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Side by side comparison */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Original */}
@@ -482,6 +695,7 @@ export default function ImageToSvgPage() {
                 Résultat SVG
               </h3>
               <div
+                ref={svgResultRef}
                 className="bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#fff_0%_50%)] bg-[length:16px_16px] rounded-xl border border-slate-200 p-4 flex items-center justify-center min-h-[300px]"
                 dangerouslySetInnerHTML={{ __html: svgContent }}
               />
