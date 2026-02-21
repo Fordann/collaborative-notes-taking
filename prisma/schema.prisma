@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id           String   @id @default(cuid())
+  name         String
+  email        String?
+  styleProfile String?  // JSON: analyzed writing style preferences
+  styleNotes   String?  // Raw text of style reference notes
+  createdAt    DateTime @default(now())
+
+  memberships  GroupMember[]
+  notes        Note[]
+  mergeResults MergeResult[]
+}
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  courseTitle  String
+  createdAt   DateTime @default(now())
+
+  members  GroupMember[]
+  sessions MergeSession[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  studentId String
+  groupId   String
+  joinedAt  DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id])
+  group   Group   @relation(fields: [groupId], references: [id])
+
+  @@unique([studentId, groupId])
+}
+
+model Note {
+  id           String   @id @default(cuid())
+  studentId    String
+  sessionId    String
+  content      String
+  originalType String   // 'text', 'pdf', 'image'
+  fileName     String?
+  createdAt    DateTime @default(now())
+
+  student Student      @relation(fields: [studentId], references: [id])
+  session MergeSession @relation(fields: [sessionId], references: [id])
+}
+
+model MergeSession {
+  id        String   @id @default(cuid())
+  groupId   String
+  title     String
+  status    String   @default("collecting") // collecting, analyzing, merging, completed, failed
+  progress  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  group   Group         @relation(fields: [groupId], references: [id])
+  notes   Note[]
+  results MergeResult[]
+}
+
+model MergeResult {
+  id                String   @id @default(cuid())
+  sessionId         String
+  studentId         String
+  mergedContent     String
+  newInfoHighlights String?  // JSON: array of new info sections
+  completenessScore Float?   // 0-100
+  pdfPath           String?
+  createdAt         DateTime @default(now())
+
+  session MergeSession @relation(fields: [sessionId], references: [id])
+  student Student      @relation(fields: [studentId], references: [id])
+
+  @@unique([sessionId, studentId])
+}
