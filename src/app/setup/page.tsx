@@ -20,16 +20,49 @@ function SetupPageInner() {
   const [step, setStep] = useState<"upload" | "analyzing" | "done">("upload");
   const [styleText, setStyleText] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [fileBase64, setFileBase64] = useState<string | null>(null);
+  const [fileMimeType, setFileMimeType] = useState<string | null>(null);
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]); // Remove data:...;base64, prefix
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
 
   const handleFileSelect = async (file: File) => {
-    // For plain text files, read directly
+    // For plain text files, read directly (no visual analysis possible)
     if (file.type === "text/plain" || file.name.endsWith(".txt")) {
       const text = await file.text();
       setStyleText(text);
+      setFileBase64(null);
+      setFileMimeType(null);
       return;
     }
 
-    // For PDFs and images, use server-side extraction
+    // Store original file as base64 for visual style analysis
+    try {
+      const b64 = await fileToBase64(file);
+      // For images, store directly for vision analysis
+      if (file.type.startsWith("image/")) {
+        setFileBase64(b64);
+        setFileMimeType(file.type);
+      } else {
+        // For PDFs, we can't use vision directly but we clear the visual data
+        setFileBase64(null);
+        setFileMimeType(null);
+      }
+    } catch {
+      setFileBase64(null);
+      setFileMimeType(null);
+    }
+
+    // For PDFs and images, use server-side extraction for text
     setExtracting(true);
     try {
       const formData = new FormData();
@@ -79,11 +112,14 @@ function SetupPageInner() {
       const student = await res.json();
       localStorage.setItem("studentId", student.id);
 
-      // Trigger background style analysis
+      // Trigger background style analysis (with optional visual data)
       fetch("/api/style-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentId: student.id }),
+        body: JSON.stringify({
+          studentId: student.id,
+          ...(fileBase64 && fileMimeType ? { fileData: fileBase64, fileMimeType } : {}),
+        }),
       });
 
       setStep("done");
