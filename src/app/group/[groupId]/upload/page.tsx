@@ -59,9 +59,29 @@ function UploadPageInner() {
         if (studentId && data.notes.some((n: { studentId: string }) => n.studentId === studentId)) {
           setUploaded(true);
         }
-        // Redirect if merge has started (auto-merge or leader triggered)
+        // Redirect if merge has started
         if (data.status === "analyzing" || data.status === "merging" || data.status === "completed") {
           router.push(`/group/${groupId}/merge/${sessionId}`);
+          return;
+        }
+
+        // Auto-trigger merge if all members contributed but merge wasn't started yet
+        const noteIds = new Set(data.notes.map((n: { studentId: string }) => n.studentId));
+        const allMembersContributed =
+          data.group.members.length >= 2 &&
+          data.group.members.every((m: { student: { id: string } }) => noteIds.has(m.student.id));
+        if (allMembersContributed && data.status === "collecting") {
+          try {
+            await fetch(`/api/merge`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId }),
+            });
+            router.push(`/group/${groupId}/merge/${sessionId}`);
+            return;
+          } catch {
+            // Fall through — user can still trigger manually
+          }
         }
       }
     } catch {
@@ -270,12 +290,12 @@ function UploadPageInner() {
           {allContributed && canMerge && (
             <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 text-center">
               <p className="text-sm text-emerald-700 font-medium">
-                Tous les membres ont contribue — le merge va se lancer automatiquement !
+                Tous les membres ont contribue !
               </p>
             </div>
           )}
 
-          {canMerge && isCurrentUserLeader && !allContributed && (
+          {canMerge && isCurrentUserLeader && (
             <button
               onClick={launchMerge}
               className="w-full py-3 rounded-xl text-sm font-medium transition bg-amber-500 text-white hover:bg-amber-600"
