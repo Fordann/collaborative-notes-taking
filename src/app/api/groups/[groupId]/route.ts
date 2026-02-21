@@ -28,23 +28,36 @@ export async function GET(
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
   }
 
-  // Enrich members with contribution status for the latest session
-  const latestSession = group.sessions[0];
-  const noteStudentIds: string[] = latestSession
-    ? latestSession.notes.map((n: { studentId: string }) => n.studentId)
-    : [];
-  const contributedStudentIds = new Set<string>(noteStudentIds);
+  // Collect all studentIds who contributed to any session
+  const allContributedStudentIds = new Set<string>();
+  for (const session of group.sessions) {
+    for (const note of session.notes) {
+      allContributedStudentIds.add(note.studentId);
+    }
+  }
 
   const enrichedMembers = group.members.map(
     (m: { studentId: string; [key: string]: unknown }) => ({
       ...m,
-      hasContributed: contributedStudentIds.has(m.studentId),
+      hasContributed: allContributedStudentIds.has(m.studentId),
     })
   );
+
+  // Enrich each session with its contributor studentIds
+  const enrichedSessions = group.sessions.map((session) => {
+    const contributorIds = session.notes.map(
+      (n: { studentId: string }) => n.studentId
+    );
+    return {
+      ...session,
+      contributorIds,
+    };
+  });
 
   return NextResponse.json({
     ...group,
     members: enrichedMembers,
+    sessions: enrichedSessions,
   });
 }
 
