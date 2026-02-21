@@ -2,29 +2,62 @@ import { NextRequest, NextResponse } from "next/server";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const potrace = require("potrace");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const Bitmap = require("potrace/lib/types/Bitmap");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const potraceUtils = require("potrace/lib/utils");
 
-function trace(
-  file: Buffer,
-  options: Record<string, unknown>
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    potrace.trace(file, options, (err: Error | null, svg: string) => {
-      if (err) reject(err);
-      else resolve(svg);
-    });
+/**
+ * Bypass Jimp entirely by loading image pixels with sharp
+ * and building the Potrace luminance bitmap ourselves.
+ */
+async function loadImageWithSharp(imageBuffer: Buffer) {
+  const sharp = (await import("sharp")).default;
+  const image = sharp(imageBuffer).resize({
+    width: 2048,
+    height: 2048,
+    fit: "inside",
+    withoutEnlargement: true,
   });
+
+  const { data, info } = await image
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const { width, height } = info;
+  const bitmap = new Bitmap(width, height);
+
+  for (let i = 0; i < width * height; i++) {
+    const idx = i * 4;
+    const opacity = data[idx + 3] / 255;
+    const r = 255 + (data[idx + 0] - 255) * opacity;
+    const g = 255 + (data[idx + 1] - 255) * opacity;
+    const b = 255 + (data[idx + 2] - 255) * opacity;
+    bitmap.data[i] = potraceUtils.luminance(r, g, b);
+  }
+
+  return bitmap;
 }
 
-function posterize(
-  file: Buffer,
+function traceImage(
+  luminanceBitmap: InstanceType<typeof Bitmap>,
   options: Record<string, unknown>
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    potrace.posterize(file, options, (err: Error | null, svg: string) => {
-      if (err) reject(err);
-      else resolve(svg);
-    });
-  });
+): string {
+  const instance = new potrace.Potrace(options);
+  instance._luminanceData = luminanceBitmap;
+  instance._imageLoaded = true;
+  return instance.getSVG();
+}
+
+function posterizeImage(
+  luminanceBitmap: InstanceType<typeof Bitmap>,
+  options: Record<string, unknown>
+): string {
+  const instance = new potrace.Posterizer(options);
+  instance._potrace._luminanceData = luminanceBitmap;
+  instance._potrace._imageLoaded = true;
+  return instance.getSVG();
 }
 
 export async function POST(req: NextRequest) {
@@ -61,13 +94,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
-
-    // Preprocess with sharp: normalize to PNG for potrace compatibility
-    const sharp = (await import("sharp")).default;
-    const processedBuffer = await sharp(buffer)
-      .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
-      .png()
-      .toBuffer();
+    const luminanceBitmap = await loadImageWithSharp(buffer);
 
     const options: Record<string, unknown> = {
       color: color === "auto" ? potrace.Potrace.COLOR_AUTO : color,
@@ -93,9 +120,9 @@ export async function POST(req: NextRequest) {
         ...options,
         steps: steps ? parseInt(steps, 10) : 4,
       };
-      svg = await posterize(processedBuffer, posterizeOptions);
+      svg = posterizeImage(luminanceBitmap, posterizeOptions);
     } else {
-      svg = await trace(processedBuffer, options);
+      svg = traceImage(luminanceBitmap, options);
     }
 
     return new NextResponse(svg, {
