@@ -38,7 +38,7 @@ export default function GroupDashboardPage() {
 
   const fetchGroup = useCallback(async () => {
     try {
-      const res = await fetch(`/api/groups/${groupId}`);
+      const res = await fetch(`/api/groups/${groupId}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setGroup(data);

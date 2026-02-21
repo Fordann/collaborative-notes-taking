@@ -50,7 +50,7 @@ function UploadPageInner() {
   const fetchSession = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const res = await fetch(`/api/merge/${sessionId}/status`);
+      const res = await fetch(`/api/merge/${sessionId}/status`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setSession(data);

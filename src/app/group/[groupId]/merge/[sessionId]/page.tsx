@@ -47,7 +47,7 @@ export default function MergePage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`/api/merge/${sessionId}/status`);
+      const res = await fetch(`/api/merge/${sessionId}/status`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setMergeStatus(data);
