@@ -48,3 +48,6 @@ next-env.d.ts
 # uploads
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+# test output
+/tests/output/

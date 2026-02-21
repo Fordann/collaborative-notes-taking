@@ -106,12 +106,18 @@ export default function GroupDashboardPage() {
       return;
     }
 
-    // Store image for visual analysis
+    // Capture image for visual analysis
     try {
-      const b64 = await fileToBase64(file);
       if (file.type.startsWith("image/")) {
+        const b64 = await fileToBase64(file);
         setFileBase64(b64);
         setFileMimeType(file.type);
+      } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        // Render first PDF page to image for visual style analysis
+        const { pdfPageToImage } = await import("@/lib/pdf-to-image");
+        const b64 = await pdfPageToImage(file);
+        setFileBase64(b64);
+        setFileMimeType("image/png");
       } else {
         setFileBase64(null);
         setFileMimeType(null);
