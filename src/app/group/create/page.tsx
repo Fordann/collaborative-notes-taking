@@ -50,13 +50,7 @@ export default function CreateGroupPage() {
 
       const group = await res.json();
 
-      // Check if student has style profile, if not redirect to setup
-      const hasStyle = localStorage.getItem("hasStyleProfile");
-      if (!hasStyle) {
-        router.push(`/setup?groupId=${group.id}`);
-      } else {
-        router.push(`/group/${group.id}`);
-      }
+      router.push(`/group/${group.id}`);
     } catch {
       alert("Erreur lors de la création du groupe");
     } finally {

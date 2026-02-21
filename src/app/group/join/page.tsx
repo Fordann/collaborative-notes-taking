@@ -54,13 +54,7 @@ export default function JoinGroupPage() {
         body: JSON.stringify({ studentId }),
       });
 
-      // Check if student has style profile
-      const hasStyle = localStorage.getItem("hasStyleProfile");
-      if (!hasStyle) {
-        router.push(`/setup?groupId=${group.id}`);
-      } else {
-        router.push(`/group/${group.id}`);
-      }
+      router.push(`/group/${group.id}`);
     } catch {
       setError("Erreur de connexion. Réessaie.");
     } finally {
