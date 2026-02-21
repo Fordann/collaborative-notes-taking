@@ -1,18 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promisify } from "util";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const potrace = require("potrace");
 
-const trace = promisify(potrace.trace) as (
+function trace(
   file: Buffer,
-  options?: Record<string, unknown>
-) => Promise<string>;
+  options: Record<string, unknown>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    potrace.trace(file, options, (err: Error | null, svg: string) => {
+      if (err) reject(err);
+      else resolve(svg);
+    });
+  });
+}
 
-const posterize = promisify(potrace.posterize) as (
+function posterize(
   file: Buffer,
-  options?: Record<string, unknown>
-) => Promise<string>;
+  options: Record<string, unknown>
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    potrace.posterize(file, options, (err: Error | null, svg: string) => {
+      if (err) reject(err);
+      else resolve(svg);
+    });
+  });
+}
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
