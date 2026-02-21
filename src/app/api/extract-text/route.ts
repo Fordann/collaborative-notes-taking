@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PDFParse } from "pdf-parse";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse/lib/pdf-parse");
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -16,10 +17,8 @@ export async function POST(req: NextRequest) {
     let text = "";
 
     if (mimeType === "application/pdf") {
-      const pdf = new PDFParse({ data: buffer });
-      const result = await pdf.getText();
-      text = result.text;
-      await pdf.destroy();
+      const pdf = await pdfParse(buffer);
+      text = pdf.text;
     } else if (mimeType.startsWith("image/")) {
       // For images, use tesseract.js OCR
       const { createWorker } = await import("tesseract.js");
