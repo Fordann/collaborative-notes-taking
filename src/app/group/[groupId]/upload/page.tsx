@@ -16,6 +16,7 @@ interface SessionData {
     courseTitle: string;
     members: {
       student: { id: string; name: string };
+      isLeader: boolean;
     }[];
   };
   notes: {
@@ -57,6 +58,10 @@ function UploadPageInner() {
         // Check if current student already uploaded
         if (studentId && data.notes.some((n: { studentId: string }) => n.studentId === studentId)) {
           setUploaded(true);
+        }
+        // Redirect if merge has started (auto-merge or leader triggered)
+        if (data.status === "analyzing" || data.status === "merging" || data.status === "completed") {
+          router.push(`/group/${groupId}/merge/${sessionId}`);
         }
       }
     } catch {
@@ -114,7 +119,7 @@ function UploadPageInner() {
 
     setUploading(true);
     try {
-      await fetch("/api/notes", {
+      const res = await fetch("/api/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,8 +129,19 @@ function UploadPageInner() {
           originalType: "text",
         }),
       });
+      const data = await res.json();
       setUploaded(true);
       fetchSession();
+
+      // Auto-trigger merge if all members have contributed
+      if (data.autoMerge) {
+        await fetch(`/api/merge`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        });
+        router.push(`/group/${groupId}/merge/${sessionId}`);
+      }
     } catch {
       alert("Erreur lors de l'upload");
     } finally {
@@ -169,9 +185,11 @@ function UploadPageInner() {
     id: m.student.id,
     name: m.student.name,
     hasContributed: contributedStudentIds.has(m.student.id),
+    isLeader: m.isLeader,
     joinedAt: "",
   }));
 
+  const isCurrentUserLeader = members.some((m) => m.id === studentId && m.isLeader);
   const allContributed = members.every((m) => m.hasContributed);
   const canMerge = session.notes.length >= 2;
 
@@ -249,18 +267,20 @@ function UploadPageInner() {
         <div className="space-y-4">
           <MemberList members={members} />
 
-          {canMerge && (
+          {allContributed && canMerge && (
+            <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 text-center">
+              <p className="text-sm text-emerald-700 font-medium">
+                Tous les membres ont contribue — le merge va se lancer automatiquement !
+              </p>
+            </div>
+          )}
+
+          {canMerge && isCurrentUserLeader && !allContributed && (
             <button
               onClick={launchMerge}
-              className={`w-full py-3 rounded-xl text-sm font-medium transition ${
-                allContributed
-                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                  : "bg-amber-500 text-white hover:bg-amber-600"
-              }`}
+              className="w-full py-3 rounded-xl text-sm font-medium transition bg-amber-500 text-white hover:bg-amber-600"
             >
-              {allContributed
-                ? "Lancer le merge !"
-                : `Lancer le merge (${session.notes.length}/${members.length} notes)`}
+              Lancer le merge ({session.notes.length}/{members.length} notes)
             </button>
           )}
 

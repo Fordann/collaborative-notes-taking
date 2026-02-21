@@ -4,6 +4,7 @@ interface Member {
   id: string;
   name: string;
   hasContributed: boolean;
+  isLeader: boolean;
   joinedAt: string;
 }
 
@@ -39,10 +40,13 @@ export default function MemberList({ members }: MemberListProps) {
             >
               {member.name.charAt(0).toUpperCase()}
             </div>
-            <div className="flex-1">
+            <div className="flex-1 flex items-center gap-1.5">
               <p className="text-sm font-medium text-slate-700">
                 {member.name}
               </p>
+              {member.isLeader && (
+                <span title="Chef de groupe">⭐</span>
+              )}
             </div>
             {member.hasContributed ? (
               <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">

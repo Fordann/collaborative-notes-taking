@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       code,
       ...(studentId && {
         members: {
-          create: { studentId },
+          create: { studentId, isLeader: true },
         },
       }),
     },

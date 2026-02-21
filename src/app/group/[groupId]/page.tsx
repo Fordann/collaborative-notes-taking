@@ -13,6 +13,7 @@ interface GroupData {
   members: {
     id: string;
     student: { id: string; name: string };
+    isLeader: boolean;
     hasContributed: boolean;
     joinedAt: string;
   }[];
@@ -103,6 +104,7 @@ export default function GroupDashboardPage() {
   const members = group.members.map((m) => ({
     id: m.student.id,
     name: m.student.name,
+    isLeader: m.isLeader,
     hasContributed: m.hasContributed,
     joinedAt: m.joinedAt,
   }));
