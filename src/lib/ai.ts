@@ -76,6 +76,13 @@ export interface StyleProfile {
 
   // -- Description synthétique --
   overallDescription: string; // Paragraphe détaillé décrivant le style unique de cet étudiant
+
+  // -- CSS-ready values (from visual analysis) --
+  cssHeadingColor?: string; // hex color for headings, e.g. "#dc2626"
+  cssAccentColor?: string; // hex color for emphasis/important, e.g. "#2563eb"
+  cssTextColor?: string; // hex color for body text, e.g. "#1e293b"
+  cssFontFamily?: string; // CSS font-family value, e.g. "Arial, sans-serif"
+  cssNewInfoColor?: string; // hex color for new info indicators
 }
 
 export async function analyzeWritingStyle(
@@ -203,7 +210,13 @@ Retourne UNIQUEMENT un objet JSON (pas de texte avant ou après):
   "specialSymbols": "symboles visuels observés et leur contexte d'utilisation",
   "emojiUsage": "emojis ou icônes visibles et leur usage",
   "capitalization": "patterns de capitalisation observés visuellement",
-  "overallVisualDescription": "description globale de l'apparence visuelle du document en 3-5 phrases"
+  "overallVisualDescription": "description globale de l'apparence visuelle du document en 3-5 phrases",
+
+  "cssHeadingColor": "couleur HEX exacte des titres principaux, ex: '#dc2626' pour rouge, '#2563eb' pour bleu, '#0f172a' pour noir",
+  "cssAccentColor": "couleur HEX utilisée pour mettre en valeur (surlignage, termes importants), ex: '#dc2626'",
+  "cssTextColor": "couleur HEX du texte principal, ex: '#1e293b'",
+  "cssFontFamily": "valeur CSS font-family correspondant à la police observée, ex: 'Arial, sans-serif' ou 'Georgia, serif'",
+  "cssNewInfoColor": "couleur HEX qui s'intègrerait bien pour marquer de nouvelles infos (couleur complémentaire au style), ex: '#6366f1'"
 }`,
           },
         ],
@@ -362,25 +375,26 @@ ${allNotesText}
 INFORMATIONS MANQUANTES IDENTIFIÉES:
 ${JSON.stringify(gapJson.missingTopics || [])}
 
-INSTRUCTIONS CRITIQUES — Respecte CHAQUE détail du style:
-1. Garde les notes originales de l'étudiant comme BASE INTOUCHABLE
-2. Intègre les informations manquantes en les rédigeant EXACTEMENT dans son style
-3. Marque les nouvelles informations avec [NOUVEAU] au début de chaque ajout
-4. REPRODUIS FIDÈLEMENT:
-   - Ses marqueurs de liste exacts (${sp.listMarkers})
-   - Son style de titres (${sp.headingStyle})
-   - Ses abréviations habituelles (${sp.abbreviations})
-   - Son ton et sa voix narrative (${sp.tone}, ${sp.voice})
-   - Ses connecteurs logiques favoris (${(sp.connectors || []).join(", ")})
-   - Ses symboles et emojis habituels (${sp.specialSymbols}, ${sp.emojiUsage})
-   - Sa mise en valeur (${sp.emphasisPatterns})
-   - Son style de définitions (${sp.definitionStyle})
-   - Son niveau de détail (${sp.detailLevel})
-5. Les nouvelles sections doivent être INDISTINGUABLES du style original
-6. Si l'étudiant utilise des abréviations, utilise-les aussi dans les ajouts
-7. Respecte l'espacement et l'indentation (${sp.spacing}, ${sp.indentation})
+INSTRUCTIONS CRITIQUES — Le résultat doit être IDENTIQUE aux notes originales, avec juste du contenu en plus:
 
-Retourne UNIQUEMENT les notes fusionnées, rien d'autre.`,
+1. COPIE les notes originales MOT POUR MOT comme base. Ne reformule RIEN de l'existant.
+2. Intègre les informations manquantes AUX BONS ENDROITS dans la structure existante (dans la section thématique appropriée).
+3. Marque UNIQUEMENT les lignes ajoutées avec [NOUVEAU] au tout début de la ligne.
+4. REPRODUIS le style EXACT de l'étudiant pour les ajouts:
+   - Mêmes marqueurs de liste (${sp.listMarkers})
+   - Même style de titres (${sp.headingStyle})
+   - Mêmes abréviations (${sp.abbreviations})
+   - Même ton et voix (${sp.tone}, ${sp.voice})
+   - Mêmes connecteurs (${(sp.connectors || []).join(", ")})
+   - Même mise en valeur (${sp.emphasisPatterns})
+   - Même style de définitions (${sp.definitionStyle})
+   - Même niveau de détail (${sp.detailLevel})
+5. N'AJOUTE PAS de décorations, titres supplémentaires, résumés, ou sections "récapitulatif" qui n'existaient pas dans l'original.
+6. N'ajoute PAS d'emojis sauf si l'étudiant en utilise (${sp.emojiUsage}).
+7. Respecte l'espacement EXACT (${sp.spacing}) et l'indentation (${sp.indentation}).
+8. Le document final doit ressembler à 95% aux notes originales — un étudiant ne doit PAS avoir l'impression que ce n'est plus sa fiche.
+
+Retourne UNIQUEMENT les notes fusionnées, rien d'autre. Pas d'introduction, pas de commentaire.`,
       },
     ],
   });

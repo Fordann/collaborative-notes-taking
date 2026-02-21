@@ -44,6 +44,7 @@ export default function GroupDashboardPage() {
   const [analyzingStyle, setAnalyzingStyle] = useState(false);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
   const [fileMimeType, setFileMimeType] = useState<string | null>(null);
+  const [reAnalyzeOpen, setReAnalyzeOpen] = useState(false);
 
   const fetchGroup = useCallback(async () => {
     try {
@@ -178,6 +179,8 @@ export default function GroupDashboardPage() {
 
       // Refresh group data to update hasStyle
       await fetchGroup();
+      setReAnalyzeOpen(false);
+      setStyleText("");
     } catch {
       alert("Erreur lors de l'analyse. Réessaie.");
     } finally {
@@ -255,17 +258,25 @@ export default function GroupDashboardPage() {
       </div>
 
       {/* Style analysis gate — blocks the rest until completed */}
-      {!hasStyle ? (
+      {!hasStyle || reAnalyzeOpen ? (
         <div className="bg-white rounded-2xl border-2 border-indigo-200 p-6 space-y-4">
           <div className="text-center space-y-2">
+            {hasStyle && (
+              <button
+                onClick={() => { setReAnalyzeOpen(false); setStyleText(""); }}
+                className="text-xs text-slate-400 hover:text-slate-600 underline"
+              >
+                Annuler
+              </button>
+            )}
             <div className="text-3xl">✍️</div>
             <h2 className="text-lg font-bold text-slate-900">
-              Analyse de ton style d&apos;écriture
+              {hasStyle ? "Re-analyser ton style" : "Analyse de ton style d'écriture"}
             </h2>
             <p className="text-sm text-slate-500">
-              Avant de commencer, uploade des notes dont tu es fier pour que
-              l&apos;IA apprenne ton style. Tes notes fusionnées seront
-              rédigées dans TON style personnel.
+              {hasStyle
+                ? "Uploade de nouvelles notes d'exemple pour améliorer l'extraction de ton style."
+                : "Avant de commencer, uploade des notes dont tu es fier pour que l'IA apprenne ton style. Tes notes fusionnées seront rédigées dans TON style personnel."}
             </p>
           </div>
 
@@ -340,6 +351,14 @@ export default function GroupDashboardPage() {
               </button>
             </div>
           </div>
+
+          {/* Re-analyze style */}
+          <button
+            onClick={() => setReAnalyzeOpen(true)}
+            className="text-xs text-slate-400 hover:text-indigo-600 transition underline"
+          >
+            Re-analyser mon style d&apos;écriture
+          </button>
 
           {/* Sessions list */}
           {group.sessions.length > 0 && (

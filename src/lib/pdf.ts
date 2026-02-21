@@ -1,5 +1,7 @@
-// Server-side PDF generation using simple HTML-to-PDF approach
-// We'll generate HTML and use the browser's print functionality for MVP
+// Server-side PDF generation — style-aware, minimal branding
+// Generates HTML that closely matches the student's original note style
+
+import { StyleProfile } from "./ai";
 
 export interface PdfContent {
   studentName: string;
@@ -8,189 +10,258 @@ export interface PdfContent {
   completenessScore: number;
   newInfoHighlights: string[];
   originalScore: number;
+  styleProfile?: Partial<StyleProfile> | null;
+}
+
+interface CSSConfig {
+  fontFamily: string;
+  textColor: string;
+  headingColor: string;
+  subHeadingColor: string;
+  accentColor: string;
+  newInfoBorderColor: string;
+  fontSize: string;
+  lineHeight: string;
+}
+
+const COLOR_MAP: Record<string, string> = {
+  rouge: "#dc2626",
+  red: "#dc2626",
+  bleu: "#2563eb",
+  blue: "#2563eb",
+  vert: "#059669",
+  green: "#059669",
+  violet: "#7c3aed",
+  purple: "#7c3aed",
+  orange: "#ea580c",
+  rose: "#e11d48",
+  pink: "#e11d48",
+  noir: "#1a1a2e",
+  black: "#1a1a2e",
+  gris: "#6b7280",
+  gray: "#6b7280",
+  marron: "#92400e",
+  brown: "#92400e",
+  jaune: "#ca8a04",
+  yellow: "#ca8a04",
+};
+
+function findColorInText(text: string, context: string): string | null {
+  const lower = text.toLowerCase();
+  // Check for hex codes first
+  const hexMatch = lower.match(/#[0-9a-f]{3,6}/);
+  if (hexMatch) return hexMatch[0];
+
+  // Check for color names near the context keyword
+  const contextIdx = lower.indexOf(context.toLowerCase());
+  const searchZone =
+    contextIdx >= 0
+      ? lower.substring(Math.max(0, contextIdx - 20), contextIdx + 60)
+      : lower;
+
+  for (const [name, hex] of Object.entries(COLOR_MAP)) {
+    if (searchZone.includes(name)) return hex;
+  }
+  return null;
+}
+
+function extractCSS(profile?: Partial<StyleProfile> | null): CSSConfig {
+  const defaults: CSSConfig = {
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    textColor: "#1e293b",
+    headingColor: "#0f172a",
+    subHeadingColor: "#334155",
+    accentColor: "#6366f1",
+    newInfoBorderColor: "#a5b4fc",
+    fontSize: "14px",
+    lineHeight: "1.65",
+  };
+
+  if (!profile) return defaults;
+
+  const config = { ...defaults };
+
+  // Use explicit CSS fields if the profile has them
+  if ((profile as Record<string, unknown>).cssHeadingColor)
+    config.headingColor = (profile as Record<string, unknown>)
+      .cssHeadingColor as string;
+  if ((profile as Record<string, unknown>).cssAccentColor)
+    config.accentColor = (profile as Record<string, unknown>)
+      .cssAccentColor as string;
+  if ((profile as Record<string, unknown>).cssTextColor)
+    config.textColor = (profile as Record<string, unknown>)
+      .cssTextColor as string;
+  if ((profile as Record<string, unknown>).cssFontFamily)
+    config.fontFamily = (profile as Record<string, unknown>)
+      .cssFontFamily as string;
+  if ((profile as Record<string, unknown>).cssNewInfoColor)
+    config.newInfoBorderColor = (profile as Record<string, unknown>)
+      .cssNewInfoColor as string;
+
+  // Parse font preference
+  if (profile.fontPreference) {
+    const fp = profile.fontPreference.toLowerCase();
+    if (fp.includes("serif") && !fp.includes("sans")) {
+      config.fontFamily = "Georgia, 'Times New Roman', Times, serif";
+    } else if (fp.includes("mono") || fp.includes("courier")) {
+      config.fontFamily = "'Courier New', Courier, monospace";
+    } else if (fp.includes("arial") || fp.includes("helvetica")) {
+      config.fontFamily = "Arial, Helvetica, sans-serif";
+    } else if (fp.includes("calibri")) {
+      config.fontFamily = "Calibri, 'Segoe UI', sans-serif";
+    }
+  }
+
+  // Parse colors from text description
+  if (profile.colors) {
+    const headingColor = findColorInText(profile.colors, "titre");
+    if (headingColor) {
+      config.headingColor = headingColor;
+      config.subHeadingColor = headingColor;
+    }
+    const accentColor =
+      findColorInText(profile.colors, "important") ||
+      findColorInText(profile.colors, "surlign") ||
+      findColorInText(profile.colors, "clé");
+    if (accentColor) {
+      config.accentColor = accentColor;
+    }
+  }
+
+  // Use accent color for new info border (lighter version)
+  config.newInfoBorderColor = config.accentColor + "60"; // 37% opacity
+
+  return config;
 }
 
 export function generateMergedNotesHTML(content: PdfContent): string {
+  const css = extractCSS(content.styleProfile);
+
   const notesHtml = content.mergedNotes
     .split("\n")
     .map((line) => {
-      if (line.startsWith("[NOUVEAU]")) {
-        return `<p class="new-info">${line.replace("[NOUVEAU]", "✨ ")}</p>`;
+      const isNew = line.startsWith("[NOUVEAU]");
+      const cleanLine = isNew ? line.replace("[NOUVEAU]", "").trim() : line;
+      const wrapClass = isNew ? ' class="new-info"' : "";
+
+      if (cleanLine.startsWith("# ")) {
+        return `<h1${wrapClass}>${cleanLine.substring(2)}</h1>`;
       }
-      if (line.startsWith("# ")) {
-        return `<h1>${line.substring(2)}</h1>`;
+      if (cleanLine.startsWith("## ")) {
+        return `<h2${wrapClass}>${cleanLine.substring(3)}</h2>`;
       }
-      if (line.startsWith("## ")) {
-        return `<h2>${line.substring(3)}</h2>`;
+      if (cleanLine.startsWith("### ")) {
+        return `<h3${wrapClass}>${cleanLine.substring(4)}</h3>`;
       }
-      if (line.startsWith("### ")) {
-        return `<h3>${line.substring(4)}</h3>`;
+      if (cleanLine.startsWith("- ") || cleanLine.startsWith("• ")) {
+        return `<li${wrapClass}>${cleanLine.substring(2)}</li>`;
       }
-      if (line.startsWith("- ") || line.startsWith("• ")) {
-        return `<li>${line.substring(2)}</li>`;
+      if (cleanLine.startsWith("→ ")) {
+        return `<li class="arrow${isNew ? " new-info" : ""}">${cleanLine.substring(2)}</li>`;
       }
-      if (line.trim() === "") {
+      if (cleanLine.trim() === "") {
         return "<br/>";
       }
-      return `<p>${line}</p>`;
+      return `<p${wrapClass}>${cleanLine}</p>`;
     })
     .join("\n");
+
+  const newCount = content.newInfoHighlights.length;
 
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Notes fusionnées - ${content.studentName}</title>
+  <title>${content.courseTitle} — ${content.studentName}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: 'Inter', sans-serif;
-      color: #1a1a2e;
-      line-height: 1.6;
+      font-family: ${css.fontFamily};
+      color: ${css.textColor};
+      line-height: ${css.lineHeight};
       padding: 40px;
       max-width: 800px;
       margin: 0 auto;
+      font-size: ${css.fontSize};
     }
 
-    .header {
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color: white;
-      padding: 30px;
-      border-radius: 16px;
-      margin-bottom: 30px;
+    h1 {
+      font-size: 1.45em;
+      margin: 28px 0 12px;
+      color: ${css.headingColor};
+      font-weight: 700;
     }
 
-    .header h1 { font-size: 24px; margin-bottom: 8px; }
-    .header .subtitle { opacity: 0.9; font-size: 14px; }
-
-    .score-bar {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-top: 16px;
-      background: rgba(255,255,255,0.15);
-      padding: 12px 16px;
-      border-radius: 8px;
-    }
-
-    .score-label { font-size: 13px; opacity: 0.9; }
-    .score-value { font-size: 28px; font-weight: 700; }
-
-    .progress-track {
-      flex: 1;
-      height: 8px;
-      background: rgba(255,255,255,0.2);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: #34d399;
-      border-radius: 4px;
-      transition: width 0.3s;
-    }
-
-    .improvement {
-      font-size: 12px;
-      background: #34d399;
-      color: #1a1a2e;
-      padding: 2px 8px;
-      border-radius: 12px;
+    h2 {
+      font-size: 1.2em;
+      margin: 22px 0 8px;
+      color: ${css.headingColor};
       font-weight: 600;
     }
 
-    .new-info-summary {
-      background: #fef3c7;
-      border-left: 4px solid #f59e0b;
-      padding: 16px 20px;
-      border-radius: 0 8px 8px 0;
-      margin-bottom: 24px;
+    h3 {
+      font-size: 1.05em;
+      margin: 16px 0 6px;
+      color: ${css.subHeadingColor};
+      font-weight: 600;
     }
 
-    .new-info-summary h3 {
-      color: #92400e;
-      font-size: 14px;
-      margin-bottom: 8px;
+    p { margin: 3px 0; }
+
+    li {
+      margin: 2px 0 2px 20px;
+      list-style-type: disc;
     }
 
-    .new-info-summary ul { list-style: none; }
-    .new-info-summary li {
-      padding: 4px 0;
-      font-size: 13px;
-      color: #78350f;
+    li.arrow {
+      list-style-type: none;
+      margin-left: 12px;
     }
-    .new-info-summary li::before { content: "✨ "; }
-
-    .notes-content {
-      background: white;
-      padding: 24px;
-      border-radius: 12px;
-      border: 1px solid #e5e7eb;
+    li.arrow::before {
+      content: "→ ";
     }
 
-    .notes-content h1 { font-size: 20px; margin: 20px 0 12px; color: #6366f1; }
-    .notes-content h2 { font-size: 17px; margin: 16px 0 8px; color: #4f46e5; }
-    .notes-content h3 { font-size: 15px; margin: 12px 0 6px; color: #6366f1; }
-    .notes-content p { margin: 4px 0; font-size: 14px; }
-    .notes-content li { margin: 2px 0 2px 20px; font-size: 14px; }
-
+    /* Subtle indicator for new info — just a thin left border */
     .new-info {
-      background: linear-gradient(90deg, #fef9c3, transparent);
-      padding: 4px 8px;
-      border-radius: 4px;
-      border-left: 3px solid #f59e0b;
+      border-left: 2.5px solid ${css.accentColor};
+      padding-left: 8px;
+      margin-left: -10px;
+    }
+
+    h1.new-info, h2.new-info, h3.new-info {
+      margin-left: 0;
+      padding-left: 10px;
+    }
+
+    li.new-info {
+      margin-left: 20px;
+      padding-left: 6px;
     }
 
     .footer {
-      margin-top: 30px;
-      text-align: center;
-      font-size: 12px;
-      color: #9ca3af;
+      margin-top: 48px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
     }
 
     @media print {
       body { padding: 20px; }
-      .header { break-inside: avoid; }
+      .footer { position: fixed; bottom: 20px; left: 20px; right: 20px; }
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>📝 Notes fusionnées</h1>
-    <div class="subtitle">${content.courseTitle} — ${content.studentName}</div>
-    <div class="score-bar">
-      <div>
-        <div class="score-label">Complétude</div>
-        <div class="score-value">${Math.round(content.completenessScore)}%</div>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill" style="width: ${content.completenessScore}%"></div>
-      </div>
-      <div class="improvement">${content.originalScore}% → ${Math.round(content.completenessScore)}%</div>
-    </div>
-  </div>
-
-  ${
-    content.newInfoHighlights.length > 0
-      ? `<div class="new-info-summary">
-    <h3>Nouvelles informations ajoutées (${content.newInfoHighlights.length})</h3>
-    <ul>
-      ${content.newInfoHighlights.map((h) => `<li>${h}</li>`).join("\n")}
-    </ul>
-  </div>`
-      : ""
-  }
-
-  <div class="notes-content">
-    ${notesHtml}
-  </div>
+  ${notesHtml}
 
   <div class="footer">
-    Généré par NotesMerge AI — ${new Date().toLocaleDateString("fr-FR")}
+    <span>Notes enrichies par NotesMerge${newCount > 0 ? ` · ${newCount} nouvelles informations` : ""}</span>
+    <span>${new Date().toLocaleDateString("fr-FR")}</span>
   </div>
 </body>
 </html>`;

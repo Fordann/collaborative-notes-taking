@@ -45,6 +45,16 @@ export async function GET(
     Math.round((result.completenessScore || 50) * 0.65)
   );
 
+  // Parse the student's style profile for visual rendering
+  let styleProfile = null;
+  if (result.student.styleProfile) {
+    try {
+      styleProfile = JSON.parse(result.student.styleProfile);
+    } catch {
+      // ignore parse errors
+    }
+  }
+
   const html = generateMergedNotesHTML({
     studentName: result.student.name,
     courseTitle: result.session.group.courseTitle,
@@ -52,6 +62,7 @@ export async function GET(
     completenessScore: result.completenessScore || 0,
     newInfoHighlights,
     originalScore,
+    styleProfile,
   });
 
   return NextResponse.json({ html, result });
