@@ -19,11 +19,37 @@ function SetupPageInner() {
   const groupId = searchParams.get("groupId");
   const [step, setStep] = useState<"upload" | "analyzing" | "done">("upload");
   const [styleText, setStyleText] = useState("");
+  const [extracting, setExtracting] = useState(false);
 
   const handleFileSelect = async (file: File) => {
-    // Read file content
-    const text = await file.text();
-    setStyleText(text);
+    // For plain text files, read directly
+    if (file.type === "text/plain" || file.name.endsWith(".txt")) {
+      const text = await file.text();
+      setStyleText(text);
+      return;
+    }
+
+    // For PDFs and images, use server-side extraction
+    setExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/extract-text", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Impossible d'extraire le texte du fichier");
+        return;
+      }
+      const { text } = await res.json();
+      setStyleText(text);
+    } catch {
+      alert("Erreur lors de l'extraction du texte");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const handleTextInput = (text: string) => {
@@ -95,6 +121,11 @@ function SetupPageInner() {
               allowText={true}
             />
 
+            {extracting && (
+              <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-200 text-center">
+                <p className="text-xs text-indigo-700">Extraction du texte en cours...</p>
+              </div>
+            )}
             {styleText && (
               <div className="space-y-3">
                 <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">

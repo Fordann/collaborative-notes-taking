@@ -5,7 +5,7 @@ const anthropic = new Anthropic({
 });
 
 async function callWithRetry(
-  params: Parameters<typeof anthropic.messages.create>[0],
+  params: Anthropic.Messages.MessageCreateParamsNonStreaming,
   maxRetries = 4
 ): Promise<Anthropic.Messages.Message> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {

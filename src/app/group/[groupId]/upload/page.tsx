@@ -72,9 +72,37 @@ function UploadPageInner() {
     return () => clearInterval(interval);
   }, [fetchSession]);
 
+  const [extracting, setExtracting] = useState(false);
+
   const handleFileUpload = async (file: File) => {
-    const text = await file.text();
-    setNoteContent(text);
+    // For plain text files, read directly
+    if (file.type === "text/plain" || file.name.endsWith(".txt")) {
+      const text = await file.text();
+      setNoteContent(text);
+      return;
+    }
+
+    // For PDFs and images, use server-side extraction
+    setExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/extract-text", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Impossible d'extraire le texte du fichier");
+        return;
+      }
+      const { text } = await res.json();
+      setNoteContent(text);
+    } catch {
+      alert("Erreur lors de l'extraction du texte");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const handleTextInput = (text: string) => {
@@ -191,6 +219,11 @@ function UploadPageInner() {
                 label="Notes de ce cours"
                 description="PDF, image ou fichier texte"
               />
+              {extracting && (
+                <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-200 text-center">
+                  <p className="text-xs text-indigo-700">Extraction du texte en cours...</p>
+                </div>
+              )}
               {noteContent && (
                 <div className="space-y-3">
                   <div className="p-3 bg-slate-50 rounded-lg max-h-32 overflow-y-auto">
