@@ -63,11 +63,13 @@ function SetupPageInner() {
     const studentName = localStorage.getItem("studentName") || "Étudiant";
 
     try {
-      // Create/update student with style notes
+      // Update existing student with style notes (preserve studentId)
+      const existingId = localStorage.getItem("studentId");
       const res = await fetch("/api/students", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          studentId: existingId || undefined,
           name: studentName,
           email: localStorage.getItem("studentEmail") || undefined,
           styleNotes: styleText,
@@ -144,12 +146,17 @@ function SetupPageInner() {
 
             <button
               onClick={() => {
-                // Skip style analysis, create student without it
+                // Skip style analysis, keep existing student
+                const existingId = localStorage.getItem("studentId");
+                if (existingId && groupId) {
+                  router.push(`/group/${groupId}`);
+                  return;
+                }
                 const studentName = localStorage.getItem("studentName") || "Étudiant";
                 fetch("/api/students", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ name: studentName }),
+                  body: JSON.stringify({ studentId: existingId || undefined, name: studentName }),
                 })
                   .then((r) => r.json())
                   .then((student) => {

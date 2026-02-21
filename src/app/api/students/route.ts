@@ -18,15 +18,33 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(student);
 }
 
-// POST: Create or get student
+// POST: Create or update student
+// If studentId is provided and exists, update it. Otherwise create a new one.
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { name, email, styleNotes } = body;
+  const { name, email, styleNotes, studentId } = body;
 
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
+  // If studentId provided, try to update existing student
+  if (studentId) {
+    const existing = await prisma.student.findUnique({ where: { id: studentId } });
+    if (existing) {
+      const updated = await prisma.student.update({
+        where: { id: studentId },
+        data: {
+          name,
+          ...(email !== undefined && { email: email || null }),
+          ...(styleNotes !== undefined && { styleNotes: styleNotes || null }),
+        },
+      });
+      return NextResponse.json(updated);
+    }
+  }
+
+  // Otherwise create new student
   const student = await prisma.student.create({
     data: {
       name,
