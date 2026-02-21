@@ -29,6 +29,12 @@ export default function Header() {
             >
               Rejoindre
             </Link>
+            <Link
+              href="/tools/image-to-svg"
+              className="text-slate-600 hover:text-indigo-600 transition"
+            >
+              Image vers SVG
+            </Link>
           </nav>
         )}
       </div>

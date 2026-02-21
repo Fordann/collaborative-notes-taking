@@ -1,0 +1,101 @@
+import { NextRequest, NextResponse } from "next/server";
+import { promisify } from "util";
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const potrace = require("potrace");
+
+const trace = promisify(potrace.trace) as (
+  file: Buffer,
+  options?: Record<string, unknown>
+) => Promise<string>;
+
+const posterize = promisify(potrace.posterize) as (
+  file: Buffer,
+  options?: Record<string, unknown>
+) => Promise<string>;
+
+export async function POST(req: NextRequest) {
+  const formData = await req.formData();
+  const file = formData.get("file") as File | null;
+  const mode = (formData.get("mode") as string) || "trace";
+  const threshold = formData.get("threshold") as string | null;
+  const color = (formData.get("color") as string) || "auto";
+  const background = (formData.get("background") as string) || "transparent";
+  const turdSize = formData.get("turdSize") as string | null;
+  const steps = formData.get("steps") as string | null;
+
+  if (!file) {
+    return NextResponse.json(
+      { error: "Aucun fichier fourni" },
+      { status: 400 }
+    );
+  }
+
+  if (!file.type.startsWith("image/")) {
+    return NextResponse.json(
+      { error: "Le fichier doit être une image (PNG, JPG, BMP, GIF)" },
+      { status: 400 }
+    );
+  }
+
+  const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+  if (file.size > MAX_SIZE) {
+    return NextResponse.json(
+      { error: "L'image ne doit pas dépasser 10 Mo" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    // Preprocess with sharp: normalize to PNG for potrace compatibility
+    const sharp = (await import("sharp")).default;
+    const processedBuffer = await sharp(buffer)
+      .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+
+    const options: Record<string, unknown> = {
+      color: color === "auto" ? potrace.Potrace.COLOR_AUTO : color,
+      background:
+        background === "transparent"
+          ? potrace.Potrace.COLOR_TRANSPARENT
+          : background,
+      turdSize: turdSize ? parseInt(turdSize, 10) : 2,
+      optCurve: true,
+      optTolerance: 0.2,
+    };
+
+    if (threshold && threshold !== "auto") {
+      options.threshold = parseInt(threshold, 10);
+    } else {
+      options.threshold = potrace.Potrace.THRESHOLD_AUTO;
+    }
+
+    let svg: string;
+
+    if (mode === "posterize") {
+      const posterizeOptions = {
+        ...options,
+        steps: steps ? parseInt(steps, 10) : 4,
+      };
+      svg = await posterize(processedBuffer, posterizeOptions);
+    } else {
+      svg = await trace(processedBuffer, options);
+    }
+
+    return new NextResponse(svg, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/svg+xml",
+      },
+    });
+  } catch (err) {
+    console.error("Image to SVG conversion failed:", err);
+    return NextResponse.json(
+      { error: "La conversion a échoué. Vérifiez que l'image est valide." },
+      { status: 500 }
+    );
+  }
+}
