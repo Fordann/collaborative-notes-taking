@@ -5,12 +5,21 @@ import { useCallback, useState, useRef, useEffect } from "react";
 type ConversionMode = "trace" | "posterize";
 type AnimationType = "none" | "fade-in" | "draw" | "scale" | "slide-up";
 
-function countSvgShapes(svg: string): { paths: number; layers: number } {
-  const pathMatches = svg.match(/class="svg-shape"/g);
+function countSvgShapes(svg: string): {
+  paths: number;
+  layers: number;
+  entities: number;
+  parts: number;
+} {
+  const pathMatches = svg.match(/class="svg-shape[^"]*"/g);
   const layerMatches = svg.match(/class="svg-layer"/g);
+  const entityMatches = svg.match(/class="svg-entity"/g);
+  const partMatches = svg.match(/class="svg-shape svg-part"/g);
   return {
     paths: pathMatches?.length ?? 0,
     layers: layerMatches?.length ?? 0,
+    entities: entityMatches?.length ?? 0,
+    parts: partMatches?.length ?? 0,
   };
 }
 
@@ -618,12 +627,22 @@ export default function ImageToSvgPage() {
       {/* Result */}
       {svgContent && (
         <div className="space-y-6">
-          {/* Shape info badge */}
+          {/* Shape info badges */}
           {shapeInfo && shapeInfo.paths > 0 && (
-            <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 text-sm font-medium">
-                {shapeInfo.paths} contours séparés
+                {shapeInfo.paths} formes animables
               </span>
+              {shapeInfo.entities > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium">
+                  {shapeInfo.entities} entités avec sous-parties
+                </span>
+              )}
+              {shapeInfo.parts > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-50 text-violet-700 text-sm font-medium">
+                  {shapeInfo.parts} sous-parties
+                </span>
+              )}
               {shapeInfo.layers > 1 && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-sm font-medium">
                   {shapeInfo.layers} couches

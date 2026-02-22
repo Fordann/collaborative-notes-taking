@@ -108,69 +108,143 @@ function bboxContains(outer: PathInfo, inner: PathInfo): boolean {
   );
 }
 
+// ── Contour tree ──────────────────────────────────────────────────────────
+
+interface ContourNode {
+  path: PathInfo;
+  children: ContourNode[];
+}
+
 /**
- * Group paths into outermost shapes with ALL their nested contours.
- *
- * In potrace with fill-rule="evenodd", nesting determines rendering:
- *   "+" at depth 0 → filled
- *   "-" at depth 1 → hole (transparent)
- *   "+" at depth 2 → filled again (island inside hole)
- *   ...
- *
- * ALL contours inside an outermost "+" must stay together in one <path>
- * for evenodd to work correctly. Splitting them breaks the alternation.
+ * Build a nesting tree from a flat list of paths.
+ * Sorted by area desc, each node's parent is the smallest contour that
+ * contains it (tightest fit).
  */
-function groupPaths(
-  paths: PathInfo[],
-  minAreaPercent: number
-): { major: PathInfo[][]; merged: PathInfo[] } {
-  const positivePaths = paths.filter((p) => p.sign === "+");
+function buildContourTree(paths: PathInfo[]): ContourNode[] {
+  const sorted = [...paths].sort((a, b) => b.area - a.area);
+  const nodes: ContourNode[] = sorted.map((p) => ({
+    path: p,
+    children: [],
+  }));
+  const roots: ContourNode[] = [];
 
-  // Sort positive by area descending (containers always have larger area)
-  const sortedPositive = [...positivePaths].sort((a, b) => b.area - a.area);
-
-  // Identify outermost "+" shapes (not contained in any larger "+" shape)
-  const outermost: PathInfo[] = [];
-  for (const pos of sortedPositive) {
-    const isNested = outermost.some((outer) => bboxContains(outer, pos));
-    if (!isNested) {
-      outermost.push(pos);
-    }
-  }
-
-  // For each outermost shape, collect ALL contours (both + and -) inside it
-  const claimed = new Set<PathInfo>();
-  const groups: { root: PathInfo; all: PathInfo[] }[] = [];
-
-  for (const root of outermost) {
-    claimed.add(root);
-    const all: PathInfo[] = [root];
-    for (const p of paths) {
-      if (p === root || claimed.has(p)) continue;
-      if (bboxContains(root, p)) {
-        all.push(p);
-        claimed.add(p);
+  for (let i = 0; i < nodes.length; i++) {
+    let foundParent = false;
+    // Search backwards (smaller area first) for the tightest container
+    for (let j = i - 1; j >= 0; j--) {
+      if (bboxContains(nodes[j].path, nodes[i].path)) {
+        nodes[j].children.push(nodes[i]);
+        foundParent = true;
+        break;
       }
     }
-    groups.push({ root, all });
-  }
-
-  // Area threshold
-  const maxArea = Math.max(...outermost.map((p) => p.area), 1);
-  const threshold = maxArea * (minAreaPercent / 100);
-
-  const major: PathInfo[][] = [];
-  const merged: PathInfo[] = paths.filter((p) => !claimed.has(p));
-
-  for (const group of groups) {
-    if (group.root.area >= threshold) {
-      major.push(group.all);
-    } else {
-      merged.push(...group.all);
+    if (!foundParent) {
+      roots.push(nodes[i]);
     }
   }
 
-  return { major, merged };
+  return roots;
+}
+
+/** Collect all PathInfo in a subtree (node + all descendants) */
+function collectSubtree(node: ContourNode): PathInfo[] {
+  const result: PathInfo[] = [node.path];
+  for (const child of node.children) {
+    result.push(...collectSubtree(child));
+  }
+  return result;
+}
+
+// ── Entity grouping ───────────────────────────────────────────────────────
+
+interface EntityGroup {
+  /** Root "+" path + direct "-" holes (+ small merged sub-parts) */
+  body: PathInfo[];
+  /** Each depth-2 "+" subtree that is large enough to animate */
+  parts: PathInfo[][];
+}
+
+/**
+ * Group paths hierarchically:
+ *
+ * Potrace alternates signs with depth:
+ *   depth 0: "+" (filled)
+ *   depth 1: "-" (hole/transparent)
+ *   depth 2: "+" (island = sub-part inside a hole)
+ *   depth 3: "-" (detail hole in sub-part)
+ *   …
+ *
+ * For each outermost "+" (entity), we split:
+ *   • body  = root "+" + direct depth-1 "-" children + small sub-parts
+ *   • parts = each depth-2 "+" subtree above area threshold
+ *
+ * The body renders as "entity outline with holes".
+ * Each part fills in one of those holes as a separate animatable shape.
+ * Together they reproduce the original evenodd rendering.
+ */
+function groupPathsHierarchical(
+  paths: PathInfo[],
+  minAreaPercent: number
+): { entities: EntityGroup[]; merged: PathInfo[] } {
+  const tree = buildContourTree(paths);
+
+  // Only "+" roots are entities
+  const outermostPositive = tree.filter((n) => n.path.sign === "+");
+  const maxArea = Math.max(...outermostPositive.map((n) => n.path.area), 1);
+  const entityThreshold = maxArea * (minAreaPercent / 100);
+
+  const entities: EntityGroup[] = [];
+  const merged: PathInfo[] = [];
+
+  // Non-"+" root nodes (rare, safety net)
+  for (const n of tree) {
+    if (n.path.sign !== "+") {
+      merged.push(...collectSubtree(n));
+    }
+  }
+
+  for (const root of outermostPositive) {
+    if (root.path.area < entityThreshold) {
+      // Small entity → merge entirely
+      merged.push(...collectSubtree(root));
+      continue;
+    }
+
+    const body: PathInfo[] = [root.path];
+    const parts: PathInfo[][] = [];
+
+    // Sub-part threshold relative to entity
+    const subPartThreshold = root.path.area * (minAreaPercent / 100);
+
+    for (const child of root.children) {
+      if (child.path.sign === "-") {
+        // Direct hole → part of body
+        body.push(child.path);
+
+        // Depth-2 "+" children of this hole are potential sub-parts
+        for (const grandchild of child.children) {
+          if (grandchild.path.sign === "+") {
+            const subtree = collectSubtree(grandchild);
+            if (grandchild.path.area >= subPartThreshold) {
+              parts.push(subtree);
+            } else {
+              body.push(...subtree);
+            }
+          } else {
+            // "-" under "-" (unusual), merge into body
+            body.push(...collectSubtree(grandchild));
+          }
+        }
+      } else {
+        // "+" under "+" (unusual in potrace), merge into body
+        body.push(...collectSubtree(child));
+      }
+    }
+
+    entities.push({ body, parts });
+  }
+
+  return { entities, merged };
 }
 
 /**
@@ -181,16 +255,31 @@ function combinePathsD(contours: PathInfo[]): string {
 }
 
 /**
- * Build separated SVG: major outermost shapes as individual <path>,
- * small detail merged into one background <path>.
+ * Build separated SVG with entity groups and sub-part granularity.
+ *
+ * Structure:
+ *   <g class="svg-layer">
+ *     <path class="svg-shape svg-detail" />           ← merged small entities
+ *     <g class="svg-entity" data-entity="0">
+ *       <path class="svg-shape svg-body" />            ← entity outline + holes
+ *       <path class="svg-shape svg-part" data-part="0" /> ← sub-part
+ *       <path class="svg-shape svg-part" data-part="1" /> ← sub-part
+ *     </g>
+ *     <path class="svg-shape" data-entity="1" />       ← entity without sub-parts
+ *   </g>
  */
 function buildSeparatedSvg(
-  result: { paths: PathInfo[]; width: number; height: number; fillColor: string },
+  result: {
+    paths: PathInfo[];
+    width: number;
+    height: number;
+    fillColor: string;
+  },
   background: string,
   minAreaPercent: number
 ): string {
   const { paths, width, height, fillColor } = result;
-  const { major, merged } = groupPaths(paths, minAreaPercent);
+  const { entities, merged } = groupPathsHierarchical(paths, minAreaPercent);
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" version="1.1">\n`;
   svg += `<style>\n`;
@@ -198,25 +287,45 @@ function buildSeparatedSvg(
   svg += `  @keyframes svg-draw { from { opacity: 0; } to { opacity: 1; } }\n`;
   svg += `</style>\n`;
 
-  if (background !== potrace.Potrace.COLOR_TRANSPARENT && background !== "transparent") {
+  if (
+    background !== potrace.Potrace.COLOR_TRANSPARENT &&
+    background !== "transparent"
+  ) {
     svg += `\t<rect x="0" y="0" width="100%" height="100%" fill="${escapeXmlAttr(background)}" />\n`;
   }
 
   svg += `<g class="svg-layer" data-layer="0" fill-rule="evenodd">\n`;
 
-  // Merged background (small outermost shapes + all their nested contours)
+  let idx = 0;
+
+  // Merged detail background
   if (merged.length > 0) {
-    const mergedD = combinePathsD(merged);
-    svg += `\t<path class="svg-shape svg-detail" data-index="0" data-area="detail" d="${mergedD}"/>\n`;
+    svg += `\t<path class="svg-shape svg-detail" data-index="${idx}" data-area="detail" d="${combinePathsD(merged)}"/>\n`;
+    idx++;
   }
 
-  // Major shapes: outermost + all nested contours in one <path>
-  major.forEach((group, i) => {
-    const d = combinePathsD(group);
-    const idx = merged.length > 0 ? i + 1 : i;
-    const rootArea = group[0].area;
-    const childCount = group.length - 1;
-    svg += `\t<path class="svg-shape" data-index="${idx}" data-area="${Math.round(rootArea)}" data-children="${childCount}" d="${d}"/>\n`;
+  // Entities
+  entities.forEach((entity, entityIdx) => {
+    if (entity.parts.length === 0) {
+      // No sub-parts → single <path>
+      svg += `\t<path class="svg-shape" data-index="${idx}" data-entity="${entityIdx}" d="${combinePathsD(entity.body)}"/>\n`;
+      idx++;
+    } else {
+      // Has sub-parts → <g> wrapper
+      svg += `\t<g class="svg-entity" data-entity="${entityIdx}">\n`;
+
+      // Body (outline + holes)
+      svg += `\t\t<path class="svg-shape svg-body" data-index="${idx}" data-entity="${entityIdx}" d="${combinePathsD(entity.body)}"/>\n`;
+      idx++;
+
+      // Sub-parts
+      entity.parts.forEach((part, partIdx) => {
+        svg += `\t\t<path class="svg-shape svg-part" data-index="${idx}" data-entity="${entityIdx}" data-part="${partIdx}" data-area="${Math.round(part[0].area)}" d="${combinePathsD(part)}"/>\n`;
+        idx++;
+      });
+
+      svg += `\t</g>\n`;
+    }
   });
 
   svg += `</g>\n</svg>`;
@@ -326,7 +435,7 @@ function posterizeImageSeparated(
 }
 
 /**
- * Build separated posterize SVG with layers, grouping nested contours properly.
+ * Build separated posterize SVG with entity/sub-part hierarchy per layer.
  */
 function buildSeparatedPosterizeSvg(
   result: { layers: PosterizeLayer[]; width: number; height: number },
@@ -341,28 +450,43 @@ function buildSeparatedPosterizeSvg(
   svg += `  @keyframes svg-draw { from { opacity: 0; } to { opacity: 1; } }\n`;
   svg += `</style>\n`;
 
-  if (background !== potrace.Potrace.COLOR_TRANSPARENT && background !== "transparent") {
+  if (
+    background !== potrace.Potrace.COLOR_TRANSPARENT &&
+    background !== "transparent"
+  ) {
     svg += `\t<rect x="0" y="0" width="100%" height="100%" fill="${escapeXmlAttr(background)}" />\n`;
   }
 
-  let globalPathIndex = 0;
+  let idx = 0;
 
   layers.forEach((layer, layerIndex) => {
-    const { major, merged } = groupPaths(layer.paths, minAreaPercent);
+    const { entities, merged } = groupPathsHierarchical(
+      layer.paths,
+      minAreaPercent
+    );
+    const fill = escapeXmlAttr(layer.fillColor);
 
     svg += `<g class="svg-layer" data-layer="${layerIndex}" data-opacity="${layer.opacity.toFixed(3)}" data-threshold="${layer.threshold}" fill-rule="evenodd" fill-opacity="${layer.opacity.toFixed(3)}">\n`;
 
     if (merged.length > 0) {
-      const mergedD = combinePathsD(merged);
-      svg += `\t<path class="svg-shape svg-detail" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="detail" fill="${escapeXmlAttr(layer.fillColor)}" d="${mergedD}"/>\n`;
-      globalPathIndex++;
+      svg += `\t<path class="svg-shape svg-detail" data-index="${idx}" data-layer-index="${layerIndex}" data-area="detail" fill="${fill}" d="${combinePathsD(merged)}"/>\n`;
+      idx++;
     }
 
-    major.forEach((group) => {
-      const d = combinePathsD(group);
-      const rootArea = group[0].area;
-      svg += `\t<path class="svg-shape" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="${Math.round(rootArea)}" data-children="${group.length - 1}" fill="${escapeXmlAttr(layer.fillColor)}" d="${d}"/>\n`;
-      globalPathIndex++;
+    entities.forEach((entity, entityIdx) => {
+      if (entity.parts.length === 0) {
+        svg += `\t<path class="svg-shape" data-index="${idx}" data-entity="${entityIdx}" data-layer-index="${layerIndex}" fill="${fill}" d="${combinePathsD(entity.body)}"/>\n`;
+        idx++;
+      } else {
+        svg += `\t<g class="svg-entity" data-entity="${entityIdx}" data-layer-index="${layerIndex}">\n`;
+        svg += `\t\t<path class="svg-shape svg-body" data-index="${idx}" data-entity="${entityIdx}" fill="${fill}" d="${combinePathsD(entity.body)}"/>\n`;
+        idx++;
+        entity.parts.forEach((part, partIdx) => {
+          svg += `\t\t<path class="svg-shape svg-part" data-index="${idx}" data-entity="${entityIdx}" data-part="${partIdx}" data-area="${Math.round(part[0].area)}" fill="${fill}" d="${combinePathsD(part)}"/>\n`;
+          idx++;
+        });
+        svg += `\t</g>\n`;
+      }
     });
 
     svg += `</g>\n`;
