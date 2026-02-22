@@ -31,6 +31,9 @@ function injectAnimation(
     el.style.removeProperty("stroke-dashoffset");
     el.style.removeProperty("stroke");
     el.style.removeProperty("stroke-width");
+    el.style.removeProperty("fill");
+    el.style.removeProperty("transition");
+    el.style.removeProperty("clip-path");
   });
   layers.forEach((el) => {
     el.style.removeProperty("animation");
@@ -52,17 +55,11 @@ function injectAnimation(
         break;
 
       case "draw": {
-        const length = el.getTotalLength?.() || 1000;
-        const fill = el.getAttribute("fill") || "black";
-        el.style.fill = "transparent";
-        el.style.stroke = fill;
-        el.style.strokeWidth = "1.5";
-        el.style.strokeDasharray = `${length}`;
-        el.style.strokeDashoffset = `${length}`;
-        el.style.transition = `stroke-dashoffset ${durationMs}ms ease-out ${delay}ms, fill ${durationMs * 0.3}ms ease-out ${delay + durationMs * 0.7}ms`;
+        // Wipe-in reveal from left to right using clip-path
+        el.style.clipPath = "inset(0 100% 0 0)";
+        el.style.transition = `clip-path ${durationMs}ms ease-in-out ${delay}ms`;
         requestAnimationFrame(() => {
-          el.style.strokeDashoffset = "0";
-          el.style.fill = fill;
+          el.style.clipPath = "inset(0 0% 0 0)";
         });
         break;
       }
@@ -111,6 +108,7 @@ export default function ImageToSvgPage() {
   const [turdSize, setTurdSize] = useState(2);
   const [steps, setSteps] = useState(4);
   const [separated, setSeparated] = useState(true);
+  const [minAreaPercent, setMinAreaPercent] = useState(2);
   const [showOptions, setShowOptions] = useState(false);
 
   // Animation
@@ -174,6 +172,7 @@ export default function ImageToSvgPage() {
       formData.append("turdSize", turdSize.toString());
       formData.append("steps", steps.toString());
       formData.append("separated", separated.toString());
+      formData.append("minAreaPercent", minAreaPercent.toString());
 
       const res = await fetch("/api/image-to-svg", {
         method: "POST",
@@ -523,7 +522,7 @@ export default function ImageToSvgPage() {
               )}
 
               {/* Separated SVG toggle */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
+              <div className="space-y-3 pt-3 border-t border-slate-100">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"
@@ -536,10 +535,37 @@ export default function ImageToSvgPage() {
                       SVG animable (sous-groupes séparés)
                     </span>
                     <p className="text-xs text-slate-400">
-                      Chaque contour est un &lt;path&gt; individuel dans un &lt;g&gt;, permettant des animations CSS/JS
+                      Seules les formes principales sont séparées, les détails sont fusionnés
                     </p>
                   </div>
                 </label>
+
+                {separated && (
+                  <div className="space-y-2 pl-8">
+                    <label className="text-sm font-medium text-slate-700">
+                      Seuil de détail (taille min. des formes séparées)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="20"
+                        step="0.5"
+                        value={minAreaPercent}
+                        onChange={(e) =>
+                          setMinAreaPercent(parseFloat(e.target.value))
+                        }
+                        className="flex-1"
+                      />
+                      <span className="text-sm text-slate-500 w-12 text-right">
+                        {minAreaPercent}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Les formes dont l&apos;aire est &lt; {minAreaPercent}% de la plus grande forme sont fusionnées en arrière-plan
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -97,13 +97,94 @@ function traceImageSeparated(
 }
 
 /**
- * Build separated SVG with each contour as its own <path> in a <g>
+ * Check if inner bbox is contained within outer bbox
+ */
+function bboxContains(outer: PathInfo, inner: PathInfo): boolean {
+  return (
+    inner.minX >= outer.minX &&
+    inner.maxX <= outer.maxX &&
+    inner.minY >= outer.minY &&
+    inner.maxY <= outer.maxY
+  );
+}
+
+interface ShapeGroup {
+  main: PathInfo;
+  holes: PathInfo[];
+}
+
+/**
+ * Group positive paths with their negative (hole) children,
+ * then split into major shapes (above area threshold) and a merged background.
+ */
+function groupPaths(
+  paths: PathInfo[],
+  minAreaPercent: number
+): { major: ShapeGroup[]; merged: PathInfo[] } {
+  const positivePaths = paths.filter((p) => p.sign === "+");
+  const negativePaths = paths.filter((p) => p.sign === "-");
+
+  const maxArea = Math.max(...positivePaths.map((p) => p.area), 1);
+  const areaThreshold = maxArea * (minAreaPercent / 100);
+
+  // Sort positive by area descending so larger shapes claim holes first
+  const sortedPositive = [...positivePaths].sort((a, b) => b.area - a.area);
+  const unclaimedHoles = [...negativePaths];
+
+  const majorGroups: ShapeGroup[] = [];
+  const minorPositive: PathInfo[] = [];
+
+  for (const pos of sortedPositive) {
+    const holes: PathInfo[] = [];
+    const remaining: PathInfo[] = [];
+
+    for (const neg of unclaimedHoles) {
+      if (bboxContains(pos, neg)) {
+        holes.push(neg);
+      } else {
+        remaining.push(neg);
+      }
+    }
+    unclaimedHoles.length = 0;
+    unclaimedHoles.push(...remaining);
+
+    if (pos.area >= areaThreshold) {
+      majorGroups.push({ main: pos, holes });
+    } else {
+      minorPositive.push(pos);
+      // Return holes for the merged group
+      unclaimedHoles.push(...holes);
+    }
+  }
+
+  // All minor positives + unclaimed holes become the merged background
+  const merged = [...minorPositive, ...unclaimedHoles];
+
+  return { major: majorGroups, merged };
+}
+
+/**
+ * Combine a positive path with its holes into a single d attribute.
+ * Uses "z" to close each subpath so fill-rule="evenodd" cuts holes properly.
+ */
+function combinePathD(group: ShapeGroup): string {
+  const parts = [group.main.d + " z"];
+  for (const hole of group.holes) {
+    parts.push(hole.d + " z");
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Build separated SVG: major shapes as individual <path>, small detail merged.
  */
 function buildSeparatedSvg(
   result: { paths: PathInfo[]; width: number; height: number; fillColor: string },
-  background: string
+  background: string,
+  minAreaPercent: number
 ): string {
   const { paths, width, height, fillColor } = result;
+  const { major, merged } = groupPaths(paths, minAreaPercent);
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" version="1.1">\n`;
   svg += `<style>\n`;
@@ -118,13 +199,17 @@ function buildSeparatedSvg(
 
   svg += `<g class="svg-layer" data-layer="0" fill-rule="evenodd">\n`;
 
-  // Sort by area descending so largest shapes come first
-  const sorted = paths
-    .map((p, i) => ({ ...p, originalIndex: i }))
-    .sort((a, b) => b.area - a.area);
+  // Merged background (small details + their holes in one path)
+  if (merged.length > 0) {
+    const mergedD = merged.map((p) => p.d + " z").join(" ");
+    svg += `\t<path class="svg-shape svg-detail" data-index="0" data-area="detail" d="${mergedD}"/>\n`;
+  }
 
-  sorted.forEach((path, sortedIndex) => {
-    svg += `\t<path class="svg-shape" data-index="${sortedIndex}" data-original-index="${path.originalIndex}" data-area="${Math.round(path.area)}" data-sign="${path.sign}" data-bbox="${path.minX},${path.minY},${path.maxX},${path.maxY}" d="${path.d}"/>\n`;
+  // Major shapes: each with its holes combined
+  major.forEach((group, i) => {
+    const d = combinePathD(group);
+    const idx = merged.length > 0 ? i + 1 : i;
+    svg += `\t<path class="svg-shape" data-index="${idx}" data-area="${Math.round(group.main.area)}" data-holes="${group.holes.length}" d="${d}"/>\n`;
   });
 
   svg += `</g>\n</svg>`;
@@ -234,11 +319,12 @@ function posterizeImageSeparated(
 }
 
 /**
- * Build separated posterize SVG with layers and individual paths
+ * Build separated posterize SVG with layers, grouping holes properly.
  */
 function buildSeparatedPosterizeSvg(
   result: { layers: PosterizeLayer[]; width: number; height: number },
-  background: string
+  background: string,
+  minAreaPercent: number
 ): string {
   const { layers, width, height } = result;
 
@@ -256,14 +342,21 @@ function buildSeparatedPosterizeSvg(
   let globalPathIndex = 0;
 
   layers.forEach((layer, layerIndex) => {
+    const { major, merged } = groupPaths(layer.paths, minAreaPercent);
+
     svg += `<g class="svg-layer" data-layer="${layerIndex}" data-opacity="${layer.opacity.toFixed(3)}" data-threshold="${layer.threshold}" fill-rule="evenodd" fill-opacity="${layer.opacity.toFixed(3)}">\n`;
 
-    const sorted = layer.paths
-      .map((p, i) => ({ ...p, originalIndex: i }))
-      .sort((a, b) => b.area - a.area);
+    // Merged small detail paths
+    if (merged.length > 0) {
+      const mergedD = merged.map((p) => p.d + " z").join(" ");
+      svg += `\t<path class="svg-shape svg-detail" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="detail" fill="${escapeXmlAttr(layer.fillColor)}" d="${mergedD}"/>\n`;
+      globalPathIndex++;
+    }
 
-    sorted.forEach((path) => {
-      svg += `\t<path class="svg-shape" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="${Math.round(path.area)}" data-sign="${path.sign}" data-bbox="${path.minX},${path.minY},${path.maxX},${path.maxY}" fill="${escapeXmlAttr(layer.fillColor)}" d="${path.d}"/>\n`;
+    // Major shapes with holes combined
+    major.forEach((group) => {
+      const d = combinePathD(group);
+      svg += `\t<path class="svg-shape" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="${Math.round(group.main.area)}" data-holes="${group.holes.length}" fill="${escapeXmlAttr(layer.fillColor)}" d="${d}"/>\n`;
       globalPathIndex++;
     });
 
@@ -306,6 +399,9 @@ export async function POST(req: NextRequest) {
   const turdSize = formData.get("turdSize") as string | null;
   const steps = formData.get("steps") as string | null;
   const separated = formData.get("separated") === "true";
+  const minAreaPercent = parseFloat(
+    (formData.get("minAreaPercent") as string) || "2"
+  );
 
   if (!file) {
     return NextResponse.json(
@@ -360,14 +456,14 @@ export async function POST(req: NextRequest) {
 
       if (separated) {
         const result = posterizeImageSeparated(luminanceBitmap, posterizeOptions);
-        svg = buildSeparatedPosterizeSvg(result, background);
+        svg = buildSeparatedPosterizeSvg(result, background, minAreaPercent);
       } else {
         svg = posterizeImage(luminanceBitmap, posterizeOptions);
       }
     } else {
       if (separated) {
         const result = traceImageSeparated(luminanceBitmap, options);
-        svg = buildSeparatedSvg(result, background);
+        svg = buildSeparatedSvg(result, background, minAreaPercent);
       } else {
         svg = traceImage(luminanceBitmap, options);
       }
