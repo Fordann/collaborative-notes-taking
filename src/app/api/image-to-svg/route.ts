@@ -108,75 +108,81 @@ function bboxContains(outer: PathInfo, inner: PathInfo): boolean {
   );
 }
 
-interface ShapeGroup {
-  main: PathInfo;
-  holes: PathInfo[];
-}
-
 /**
- * Group positive paths with their negative (hole) children,
- * then split into major shapes (above area threshold) and a merged background.
+ * Group paths into outermost shapes with ALL their nested contours.
+ *
+ * In potrace with fill-rule="evenodd", nesting determines rendering:
+ *   "+" at depth 0 → filled
+ *   "-" at depth 1 → hole (transparent)
+ *   "+" at depth 2 → filled again (island inside hole)
+ *   ...
+ *
+ * ALL contours inside an outermost "+" must stay together in one <path>
+ * for evenodd to work correctly. Splitting them breaks the alternation.
  */
 function groupPaths(
   paths: PathInfo[],
   minAreaPercent: number
-): { major: ShapeGroup[]; merged: PathInfo[] } {
+): { major: PathInfo[][]; merged: PathInfo[] } {
   const positivePaths = paths.filter((p) => p.sign === "+");
-  const negativePaths = paths.filter((p) => p.sign === "-");
 
-  const maxArea = Math.max(...positivePaths.map((p) => p.area), 1);
-  const areaThreshold = maxArea * (minAreaPercent / 100);
-
-  // Sort positive by area descending so larger shapes claim holes first
+  // Sort positive by area descending (containers always have larger area)
   const sortedPositive = [...positivePaths].sort((a, b) => b.area - a.area);
-  const unclaimedHoles = [...negativePaths];
 
-  const majorGroups: ShapeGroup[] = [];
-  const minorPositive: PathInfo[] = [];
-
+  // Identify outermost "+" shapes (not contained in any larger "+" shape)
+  const outermost: PathInfo[] = [];
   for (const pos of sortedPositive) {
-    const holes: PathInfo[] = [];
-    const remaining: PathInfo[] = [];
+    const isNested = outermost.some((outer) => bboxContains(outer, pos));
+    if (!isNested) {
+      outermost.push(pos);
+    }
+  }
 
-    for (const neg of unclaimedHoles) {
-      if (bboxContains(pos, neg)) {
-        holes.push(neg);
-      } else {
-        remaining.push(neg);
+  // For each outermost shape, collect ALL contours (both + and -) inside it
+  const claimed = new Set<PathInfo>();
+  const groups: { root: PathInfo; all: PathInfo[] }[] = [];
+
+  for (const root of outermost) {
+    claimed.add(root);
+    const all: PathInfo[] = [root];
+    for (const p of paths) {
+      if (p === root || claimed.has(p)) continue;
+      if (bboxContains(root, p)) {
+        all.push(p);
+        claimed.add(p);
       }
     }
-    unclaimedHoles.length = 0;
-    unclaimedHoles.push(...remaining);
+    groups.push({ root, all });
+  }
 
-    if (pos.area >= areaThreshold) {
-      majorGroups.push({ main: pos, holes });
+  // Area threshold
+  const maxArea = Math.max(...outermost.map((p) => p.area), 1);
+  const threshold = maxArea * (minAreaPercent / 100);
+
+  const major: PathInfo[][] = [];
+  const merged: PathInfo[] = paths.filter((p) => !claimed.has(p));
+
+  for (const group of groups) {
+    if (group.root.area >= threshold) {
+      major.push(group.all);
     } else {
-      minorPositive.push(pos);
-      // Return holes for the merged group
-      unclaimedHoles.push(...holes);
+      merged.push(...group.all);
     }
   }
 
-  // All minor positives + unclaimed holes become the merged background
-  const merged = [...minorPositive, ...unclaimedHoles];
-
-  return { major: majorGroups, merged };
+  return { major, merged };
 }
 
 /**
- * Combine a positive path with its holes into a single d attribute.
- * Uses "z" to close each subpath so fill-rule="evenodd" cuts holes properly.
+ * Combine multiple contours into a single d attribute with z-closed subpaths.
  */
-function combinePathD(group: ShapeGroup): string {
-  const parts = [group.main.d + " z"];
-  for (const hole of group.holes) {
-    parts.push(hole.d + " z");
-  }
-  return parts.join(" ");
+function combinePathsD(contours: PathInfo[]): string {
+  return contours.map((p) => p.d + " z").join(" ");
 }
 
 /**
- * Build separated SVG: major shapes as individual <path>, small detail merged.
+ * Build separated SVG: major outermost shapes as individual <path>,
+ * small detail merged into one background <path>.
  */
 function buildSeparatedSvg(
   result: { paths: PathInfo[]; width: number; height: number; fillColor: string },
@@ -190,7 +196,6 @@ function buildSeparatedSvg(
   svg += `<style>\n`;
   svg += `  .svg-shape { fill: ${escapeXmlAttr(fillColor)}; stroke: none; }\n`;
   svg += `  @keyframes svg-draw { from { opacity: 0; } to { opacity: 1; } }\n`;
-  svg += `  @keyframes svg-stroke-draw { from { stroke-dashoffset: var(--path-length); } to { stroke-dashoffset: 0; } }\n`;
   svg += `</style>\n`;
 
   if (background !== potrace.Potrace.COLOR_TRANSPARENT && background !== "transparent") {
@@ -199,17 +204,19 @@ function buildSeparatedSvg(
 
   svg += `<g class="svg-layer" data-layer="0" fill-rule="evenodd">\n`;
 
-  // Merged background (small details + their holes in one path)
+  // Merged background (small outermost shapes + all their nested contours)
   if (merged.length > 0) {
-    const mergedD = merged.map((p) => p.d + " z").join(" ");
+    const mergedD = combinePathsD(merged);
     svg += `\t<path class="svg-shape svg-detail" data-index="0" data-area="detail" d="${mergedD}"/>\n`;
   }
 
-  // Major shapes: each with its holes combined
+  // Major shapes: outermost + all nested contours in one <path>
   major.forEach((group, i) => {
-    const d = combinePathD(group);
+    const d = combinePathsD(group);
     const idx = merged.length > 0 ? i + 1 : i;
-    svg += `\t<path class="svg-shape" data-index="${idx}" data-area="${Math.round(group.main.area)}" data-holes="${group.holes.length}" d="${d}"/>\n`;
+    const rootArea = group[0].area;
+    const childCount = group.length - 1;
+    svg += `\t<path class="svg-shape" data-index="${idx}" data-area="${Math.round(rootArea)}" data-children="${childCount}" d="${d}"/>\n`;
   });
 
   svg += `</g>\n</svg>`;
@@ -319,7 +326,7 @@ function posterizeImageSeparated(
 }
 
 /**
- * Build separated posterize SVG with layers, grouping holes properly.
+ * Build separated posterize SVG with layers, grouping nested contours properly.
  */
 function buildSeparatedPosterizeSvg(
   result: { layers: PosterizeLayer[]; width: number; height: number },
@@ -332,7 +339,6 @@ function buildSeparatedPosterizeSvg(
   svg += `<style>\n`;
   svg += `  .svg-shape { stroke: none; }\n`;
   svg += `  @keyframes svg-draw { from { opacity: 0; } to { opacity: 1; } }\n`;
-  svg += `  @keyframes svg-stroke-draw { from { stroke-dashoffset: var(--path-length); } to { stroke-dashoffset: 0; } }\n`;
   svg += `</style>\n`;
 
   if (background !== potrace.Potrace.COLOR_TRANSPARENT && background !== "transparent") {
@@ -346,17 +352,16 @@ function buildSeparatedPosterizeSvg(
 
     svg += `<g class="svg-layer" data-layer="${layerIndex}" data-opacity="${layer.opacity.toFixed(3)}" data-threshold="${layer.threshold}" fill-rule="evenodd" fill-opacity="${layer.opacity.toFixed(3)}">\n`;
 
-    // Merged small detail paths
     if (merged.length > 0) {
-      const mergedD = merged.map((p) => p.d + " z").join(" ");
+      const mergedD = combinePathsD(merged);
       svg += `\t<path class="svg-shape svg-detail" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="detail" fill="${escapeXmlAttr(layer.fillColor)}" d="${mergedD}"/>\n`;
       globalPathIndex++;
     }
 
-    // Major shapes with holes combined
     major.forEach((group) => {
-      const d = combinePathD(group);
-      svg += `\t<path class="svg-shape" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="${Math.round(group.main.area)}" data-holes="${group.holes.length}" fill="${escapeXmlAttr(layer.fillColor)}" d="${d}"/>\n`;
+      const d = combinePathsD(group);
+      const rootArea = group[0].area;
+      svg += `\t<path class="svg-shape" data-index="${globalPathIndex}" data-layer-index="${layerIndex}" data-area="${Math.round(rootArea)}" data-children="${group.length - 1}" fill="${escapeXmlAttr(layer.fillColor)}" d="${d}"/>\n`;
       globalPathIndex++;
     });
 
